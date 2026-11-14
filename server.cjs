@@ -10,4 +10,4 @@ const server = http.createServer((req,res)=>{
  if(!file.startsWith(root+path.sep)){res.writeHead(403);return res.end('Forbidden');}
  fs.readFile(file,(err,data)=>{if(err){res.writeHead(404);return res.end('Not found');}res.writeHead(200,{'Content-Type':types[path.extname(file)]||'application/octet-stream'});res.end(data);});
 });
-server.listen(Number(process.env.PORT)||4173,'127.0.0.1',()=>console.log('Quiet Worlds: http://127.0.0.1:'+server.address().port));
+server.listen(Number(process.env.PORT)||4173,'127.0.0.1',()=>console.log('SandFox: http://127.0.0.1:'+server.address().port));
