@@ -41,7 +41,6 @@ class Scenery {
     const lamp=(x,y)=>{rect(x,y,1,18,'#625f4a');rect(x-3,y-3,7,7,'#6e674c');rect(x-2,y-2,5,5,'#e6cc8f');rect(x-4,y-4,9,1,'#46534b');this.lamps.push([x,y,13]);};
     if(id==='forest'){
       for(let n=0;n<22;n++)tree(n*19+r()*9,154+r()*10,34+r()*26,'#294c4e');
-      for(const [x,y,s]of[[40,151,70],[72,151,45],[319,163,58],[348,163,82]]){tree(x-2,y-2,s,'#42674e');tree(x+2,y-2,s*.86,'#537b58');}
       cabin(15,165);lamp(83,173);lamp(299,178);
       for(let n=0;n<32;n++){const x=r()*W;if(x>99&&x<295)continue;const y=184+Math.sin(x*.031)*9+Math.sin(x*.09)*3;rect(x,y-2,2,3,'#adc18a');if(n%4===0){rect(x-1,y-4,4,2,'#c18c72');rect(x,y-2,1,2,'#dfd2b0');}}
     }else if(id==='brook'){
@@ -80,7 +79,9 @@ class Scenery {
       if(m===M.FIRE){v=((i*13+t*7)%55)-15;c=[255,174,63];}
       if(m===M.LAVA)v=Math.sin(x*.19+y*.21-time*2)*19;
       if(m===M.WATER){v=v*.5+Math.sin(x*.1-time*2.2)*5;if(y>0&&a[i-W]!==M.WATER){c=[129,199,202];v=Math.sin(x*.18-time*3)*11;}else if(y%7===0&&Math.sin(x*.055+time*.6)>.94){c=[109,178,190];}}
-      if(m===M.PLANT){c=this.noise[i]>2?[153,182,103]:[92,143,83];if(this.noise[i]===6&&y>0&&!a[i-W])c=[215,174,144];}
+      if(m===M.PLANT){c=this.noise[i]>2?[126,164,97]:[78,124,82];if(world.scene==='garden'&&this.noise[i]===6&&y>0&&!a[i-W])c=[215,174,144];}
+      if(m===M.COMPOST)c=world.physics.damp[i]>0?[91,82,57]:[111,98,65];
+      if(world.burning[i]){c=[161,100,51];v+=Math.sin(time*5+i)*16;}
       if(m===M.STONE){c=rock;if(y%13===0)v-=8;if((world.scene==='forest'||world.scene==='brook')&&y>0&&(a[i-W]===0||a[i-W]===M.WATER))c=[104,137,105];}
       if(m===M.SOIL&&y>0&&!a[i-W])c=[138,158,94];
       if(m===M.WOOD)v+=Math.floor(x/2)%3===0?-13:1;
@@ -92,6 +93,8 @@ class Scenery {
   details(world,time){
     const g=this.ctx,id=world.scene;
     const rect=(x,y,w,h,c)=>{g.fillStyle=c;g.fillRect(Math.round(x),Math.round(y),w,h);};
+    // Broad clouds move in the same wind as the small plumes below.
+    if(id!=='volcano'&&id!=='hourglass')for(let n=0;n<3;n++){const x=((time*(n+1)*.9+n*151)%(W+120))-90,y=30+n*19;g.globalAlpha=.07;rect(x,y,66,5,'#d6dfcc');rect(x+10,y-4,41,4,'#d6dfcc');g.globalAlpha=1;}
     // Warmth is built from stepped translucent rectangles, never blur filters.
     for(const [x,y,r]of this.lamps){g.globalAlpha=.045+Math.sin(time*1.3+x)*.008;rect(x-r,y-r,2*r,2*r,'#ffcd77');g.globalAlpha=.065;rect(x-r*.55,y-r*.55,Math.floor(r*1.1),Math.floor(r*1.1),'#ffdc8c');}g.globalAlpha=1;
     if(id==='forest'||id==='garden'||id==='brook'){

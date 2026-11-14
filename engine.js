@@ -1,12 +1,13 @@
 /* SandFox cellular physics. Fixed-size arrays; no framework or network access. */
 (function(root) {
 'use strict';
+const {WorldPhysics}=typeof module!=='undefined'?require('./physics.js'):root.SandFoxPhysics;
 const M = {EMPTY:0,SAND:1,WATER:2,FIRE:3,LAVA:4,STONE:5,GAS:6,WOOD:7,STEAM:8,SOIL:9,
-  SNOW:10,ICE:11,OIL:12,PLANT:13,SEED:14,SMOKE:15,ASH:16,GLASS:17};
+  SNOW:10,ICE:11,OIL:12,PLANT:13,SEED:14,SMOKE:15,ASH:16,GLASS:17,COMPOST:18};
 const COLORS = [[0,0,0],[220,190,125],[65,153,184],[255,177,74],[243,109,51],
   [100,115,112],[166,186,135],[132,92,60],[181,211,208],[117,111,75],
   [221,234,231],[137,202,214],[164,124,61],[110,157,85],[182,141,82],
-  [127,134,140],[133,129,120],[154,197,181]];
+  [127,134,140],[133,129,120],[154,197,181],[107,91,65]];
 const SCENES = [
   {id:'forest',name:'Лесной дождь',desc:'Прохлада и шелест листвы',caption:'капли на хвое, свет в окне',climate:'Дождь → ручьи → туман',sky:['#203a48','#294b55','#385c60','#526e66'],phase:['вечерний дождь','туман у воды','светлячки в траве']},
   {id:'brook',name:'Мшистый ручей',desc:'Каскады и тёплая мельница',caption:'вода бежит, колесо крутится',climate:'Родник → каскады → заводь',sky:['#344857','#49606a','#637b79','#899184'],phase:['шёпот родника','солнечные просветы','вода на камнях']},
@@ -19,8 +20,8 @@ const SCENES = [
 ];
 const isGas = m => m===M.GAS||m===M.STEAM||m===M.SMOKE||m===M.FIRE;
 const isLiquid = m => m===M.WATER||m===M.OIL||m===M.LAVA;
-const isPowder = m => m===M.SAND||m===M.SNOW||m===M.SEED||m===M.ASH;
-const DENSITY = new Uint8Array([0,8,5,1,6,0,1,0,1,0,3,0,3,0,4,1,2,0]);
+const isPowder = m => m===M.SAND||m===M.SNOW||m===M.SEED||m===M.ASH||m===M.COMPOST;
+const DENSITY = new Uint8Array([0,8,5,1,6,0,1,0,1,0,3,0,3,0,4,1,2,0,6]);
 
 class World {
   constructor(w=384,h=240,seed=12345) {
@@ -28,6 +29,7 @@ class World {
     this.cells=new Uint8Array(w*h); this.life=new Uint16Array(w*h);
     this.moved=new Uint32Array(w*h); this.velocity=new Uint8Array(w*h);
     this.drift=new Int8Array(w*h); this.terrain=new Uint8Array(w*h);
+    this.physics=new WorldPhysics(this,M);
     this.intense=false; this.ambient=true; this.wind=0; this.reset('forest');
   }
   random() {let s=this.seed;s^=s<<13;s^=s>>>17;s^=s<<5;this.seed=s>>>0;return this.seed/4294967296;}
@@ -35,7 +37,7 @@ class World {
     x=Math.floor(x);y=Math.floor(y);if(x<0||x>=this.w||y<0||y>=this.h)return;
     const i=x+y*this.w;this.cells[i]=m;
     this.life[i]=life===undefined?(m===M.FIRE?70+Math.floor(this.random()*60):m===M.STEAM?600:m===M.SMOKE?220:m===M.LAVA?2400:m===M.PLANT?160:0):life;
-    this.velocity[i]=0;this.drift[i]=0;this.moved[i]=this.tick;
+    this.velocity[i]=0;this.drift[i]=0;this.moved[i]=this.tick;this.physics.onSet(i,m);
   }
   disk(x,y,r,m,replace=false) {
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++)if(dx*dx+dy*dy<=r*r) {
@@ -46,7 +48,9 @@ class World {
   line(x,y,a,b,m) {const n=Math.ceil(Math.max(Math.abs(a-x),Math.abs(b-y)));for(let k=0;k<=n;k++)this.set(x+(a-x)*k/(n||1),y+(b-y)*k/(n||1),m);}
   reset(scene) {
     if(!SCENES.some(s=>s.id===scene))scene='free';
-    this.scene=scene;this.tick=0;this.cells.fill(0);this.life.fill(0);this.velocity.fill(0);this.drift.fill(0);this.moved.fill(0);
+    this.scene=scene;this.tick=0;this.cells.fill(0);this.life.fill(0);this.velocity.fill(0);this.drift.fill(0);this.moved.fill(0);this.physics.reset();
+    this.cloudWater=scene==='brook'?1200:scene==='forest'?700:scene==='garden'?300:scene==='snow'?450:0;
+    this.oceanWater=5000;
     const w=this.w,h=this.h,sx=w/384,sy=h/240;
     const put=(x,y,m)=>this.set(x*sx,y*sy,m);
     const line=(x,y,a,b,m)=>this.line(x*sx,y*sy,a*sx,b*sy,m);
@@ -57,6 +61,11 @@ class World {
       for(let x=Math.floor(100*sx);x<290*sx;x++)for(let y=Math.floor(164*sy);y<(207+Math.sin((x/sx-100)/190*Math.PI)*16)*sy;y++)this.set(x,y,y>199*sy?M.WATER:0);
       line(10,154,83,154,M.STONE);line(10,153,83,153,M.SOIL);line(292,166,374,166,M.STONE);line(292,165,374,165,M.SOIL);
       for(const [x,y] of [[40,153],[72,153],[319,165],[348,165]])fill(x,y-22,x+3,y,M.WOOD);
+      // Foreground trees are material, not a painted obstacle behind the particles.
+      for(const [x,y,size]of[[40,151,70],[72,151,45],[319,163,58],[348,163,82]])for(let tier=0;tier<4;tier++){
+        const top=y-size+tier*size*.18,half=size*(.13+tier*.065);
+        for(let row=0;row<size*.32;row+=2){const width=half*row/(size*.32);for(let xx=x-width;xx<=x+width;xx++)for(let yy=top+row;yy<top+row+2;yy++)if(!this.cells[Math.floor(xx*sx)+Math.floor(yy*sy)*w]){put(xx,yy,M.PLANT);this.life[Math.floor(xx*sx)+Math.floor(yy*sy)*w]=0;}}
+      }
     } else if(scene==='brook') {
       ground(x=>x<92?128+Math.sin(x*.06)*3:x<187?164+Math.sin(x*.05)*3:x<281?194+Math.sin(x*.07)*3:224+Math.sin(x*.04)*3);
       for(const [a,b,y,depth] of [[0,92,119,13],[92,187,157,12],[187,281,187,12],[281,384,214,14]])
@@ -97,6 +106,7 @@ class World {
     v=this.life[j];this.life[j]=this.life[i];this.life[i]=v;
     v=this.velocity[j];this.velocity[j]=this.velocity[i];this.velocity[i]=v;
     v=this.drift[j];this.drift[j]=this.drift[i];this.drift[i]=v;
+    this.physics.swap(i,j);
     this.moved[j]=this.tick;this.moved[i]=this.tick;
   }
   canDisplace(m,other) {return !other||(isGas(other)&&!isGas(m))||(isLiquid(other)&&DENSITY[m]>DENSITY[other]);}
@@ -104,22 +114,22 @@ class World {
   ambientStep() {
     const {w,h,cells:a}=this,scale=this.intense?2:1;
     if(this.scene==='forest'||this.scene==='garden') {
-      const rain=this.scene==='forest'?scale*2:(this.tick%2400<850?scale:0);
-      for(let k=0;k<rain;k++)this.emit(this.random()*w,5,M.WATER);
-      for(let k=0;k<Math.max(6,rain*12);k++) {
-        const x=Math.floor(this.random()*w),y=Math.floor(h*(.7+this.random()*.28)),i=x+y*w;
-        if(a[i]===M.WATER){a[i]=0;if(this.random()<.05&&y>=4&&!a[i-4*w])this.set(x,y-4,M.STEAM);}
+      const rain=this.tick%3===0?(this.scene==='forest'?scale*2:(this.tick%2400<850?scale:0)):0;
+      for(let k=0;k<rain&&this.cloudWater>0;k++){const x=Math.floor(this.random()*w);if(!a[x+5*w]){this.set(x,5,M.WATER);this.cloudWater--;}}
+      if(this.tick%8===0)for(let k=0;k<4*scale;k++){
+        const x=Math.floor(this.random()*w);
+        for(let y=Math.floor(h*.66);y<h*.97;y++){const i=x+y*w;if(a[i]===M.WATER&&!a[i-w]){this.set(x,y,M.STEAM);this.temperature[i]=98;break;}}
       }
     } else if(this.scene==='brook') {
-      for(let n=0;n<scale*2;n++)this.emit(w*(.025+this.random()*.09),h*.47,M.WATER);
-      for(let n=0;n<32*scale;n++){const i=Math.floor(w*(.77+this.random()*.23))+Math.floor(h*(.88+this.random()*.11))*w;if(a[i]===M.WATER)a[i]=0;}
+      for(let n=0;n<scale*2&&this.cloudWater>0;n++){const x=Math.floor(w*(.025+this.random()*.09)),y=Math.floor(h*.47);if(!a[x+y*w]){this.set(x,y,M.WATER);this.cloudWater--;}}
+      for(let n=0;n<32*scale;n++){const i=Math.floor(w*(.77+this.random()*.23))+Math.floor(h*(.88+this.random()*.11))*w;if(a[i]===M.WATER){a[i]=0;this.cloudWater++;}}
     } else if(this.scene==='cove') {
       const surface=Math.floor(h*(.802+Math.sin(this.tick/900)*.022));
-      for(let n=0;n<6*scale;n++){const x=w-1-Math.floor(this.random()*8),y=surface+Math.floor(this.random()*Math.max(1,h-surface)),i=x+y*w;if(!a[i])this.set(x,y,M.WATER);}
-      for(let n=0;n<25;n++){const x=Math.floor(w*(.35+this.random()*.65)),y=Math.floor(h*(.76+this.random()*.19)),i=x+y*w;if(y<surface&&a[i]===M.WATER)a[i]=0;}
+      for(let n=0;n<6*scale&&this.oceanWater>0;n++){const x=w-1-Math.floor(this.random()*8),y=surface+Math.floor(this.random()*Math.max(1,h-surface)),i=x+y*w;if(!a[i]){this.set(x,y,M.WATER);this.oceanWater--;}}
+      for(let n=0;n<25;n++){const x=Math.floor(w*(.35+this.random()*.65)),y=Math.floor(h*(.76+this.random()*.19)),i=x+y*w;if(y<surface&&a[i]===M.WATER){a[i]=0;this.oceanWater++;}}
     } else if(this.scene==='snow') {
-      if(this.tick%3===0)for(let k=0;k<scale;k++)this.emit(this.random()*w,3,M.SNOW);
-      for(let k=0;k<20;k++){const i=Math.floor(this.random()*w)+Math.floor(h*(.76+this.random()*.22))*w;if(a[i]===M.SNOW&&!this.terrain[i]&&this.random()<.5)a[i]=0;}
+      if(this.tick%4===0)for(let k=0;k<scale&&this.cloudWater>0;k++){const x=Math.floor(this.random()*w);if(!a[x+3*w]){this.set(x,3,M.SNOW);this.cloudWater--;}}
+      for(let k=0;k<20;k++){const i=Math.floor(this.random()*w)+Math.floor(h*(.76+this.random()*.22))*w;if(a[i]===M.SNOW&&!this.terrain[i]&&this.random()<.35){a[i]=0;this.cloudWater++;}}
     } else if(this.scene==='volcano') {
       if(this.tick%(this.intense?3:7)===0)this.disk(w*.531,h*.59,this.intense?3:2,M.LAVA,true);
       if(this.tick%12===0)this.emit(w*(.49+this.random()*.08),h*.56,M.GAS);
@@ -139,14 +149,7 @@ class World {
     for(let d=0;d<4;d++) {
       if((d===0&&x===0)||(d===1&&x===w-1))continue;
       const j=i+(d===0?-1:d===1?1:d===2?-w:w);if(j<0||j>=a.length)continue;
-      const other=a[j];
-      if(other===M.WATER){this.set(j%w,Math.floor(j/w),M.STEAM);this.set(x,y,m===M.LAVA?M.STONE:M.SMOKE);return;}
-      if(other===M.ICE||other===M.SNOW){this.set(j%w,Math.floor(j/w),M.WATER);if(m===M.FIRE)this.life[i]=Math.max(1,this.life[i]-15);}
-      else if(m===M.LAVA&&other===M.SAND)this.set(j%w,Math.floor(j/w),M.GLASS);
-      else if((other===M.WOOD||other===M.GAS||other===M.OIL||other===M.PLANT||other===M.SEED)&&this.random()<.19) {
-        this.set(j%w,Math.floor(j/w),M.FIRE,other===M.WOOD?210:other===M.OIL?155:65);
-        if(other===M.GAS)for(let n=0;n<4;n++)this.emit(x+(n%2?2:-2),y+(n<2?-1:1),M.FIRE);
-      }
+      if(a[j])this.physics.exchangeHeat(i,j,.65);
     }
   }
   grow(i,x,y) {
@@ -160,24 +163,30 @@ class World {
   step() {
     this.tick++;this.wind=Math.sin(this.tick/650)*.6;
     if(this.ambient)this.ambientStep();
+    if(this.tick%4===0)this.physics.thermalStep();
+    if(this.tick%8===0)this.physics.balanceWater();
+    if(this.tick%16===0)this.physics.ecologyStep();
     const w=this.w,h=this.h,a=this.cells,reverse=this.tick&1;
     for(let y=h-1;y>=0;y--)for(let k=0;k<w;k++) {
       const x=reverse?w-1-k:k,i=x+y*w,m=a[i];
-      if(!m||this.moved[i]===this.tick||m===M.STONE||m===M.SOIL||m===M.WOOD||m===M.ICE||m===M.GLASS)continue;
+      if(!m||this.moved[i]===this.tick)continue;
+      if(m===M.WOOD){this.physics.burnStep(i);continue;}
+      if(m===M.STONE||m===M.SOIL||m===M.ICE||m===M.GLASS)continue;
       if(m===M.PLANT){this.grow(i,x,y);continue;}
       if(m===M.FIRE||m===M.LAVA){this.reactHeat(i,x,y,m);if(a[i]!==m)continue;}
-      if(m===M.SEED&&y<h-1&&(a[i+w]===M.SOIL||a[i+w]===M.PLANT)) {
+      if(m===M.SEED&&y<h-1&&(a[i+w]===M.SOIL||a[i+w]===M.PLANT||a[i+w]===M.COMPOST)) {
         const water=x>0&&a[i-1]===M.WATER?i-1:x<w-1&&a[i+1]===M.WATER?i+1:y>0&&a[i-w]===M.WATER?i-w:-1;
-        if(water>=0){a[water]=0;this.set(x,y,M.PLANT,240);continue;}
+        if(water>=0||this.physics.damp[i+w]>0){let stored=0;if(water>=0){a[water]=0;stored=1;}else if(this.physics.boundWater[i+w]>0){this.physics.boundWater[i+w]--;stored=1;}this.set(x,y,M.PLANT,240);this.physics.boundWater[i]=stored;continue;}
       }
-      if(m===M.FIRE||m===M.STEAM||m===M.SMOKE||m===M.LAVA) {
+      if(m===M.FIRE||m===M.SMOKE||m===M.LAVA) {
         if(this.life[i]>0)this.life[i]--;
-        if(!this.life[i]){this.set(x,y,m===M.STEAM?M.WATER:m===M.LAVA?M.STONE:m===M.FIRE?(this.random()<.35?M.ASH:M.SMOKE):0);continue;}
+        if(!this.life[i]){const t=this.temperature[i],next=m===M.LAVA?M.STONE:m===M.FIRE?(this.random()<.35?M.ASH:M.SMOKE):0;if(!next&&this.physics.boundWater[i]){this.cloudWater+=this.physics.boundWater[i];this.physics.boundWater[i]=0;}this.physics.change(i,next,m===M.LAVA?Math.min(t,640):Math.min(t,180));continue;}
       }
       if(isGas(m)) {
-        if(y<=2){this.set(x,y,m===M.STEAM?M.WATER:0);continue;}
+        if(y<=2){const bound=this.physics.boundWater[i];if(m===M.STEAM&&this.ambient){this.cloudWater+=1+bound;this.set(x,y,0);}else if(m===M.STEAM)this.physics.change(i,M.WATER,18);else {this.cloudWater+=bound;this.set(x,y,0);}continue;}
         if(m===M.SMOKE&&this.tick%2)continue;
-        const dir=this.wind>.15?1:this.wind<-.15?-1:((i+this.tick)%7<3?-1:1),up=i-w;
+        const breeze=this.wind+Math.sin(y*.035+this.tick/800)*.35+Math.sin(x*.021-this.tick/1000)*.2;
+        const dir=breeze>.1?1:breeze<-.1?-1:((i+this.tick)%7<3?-1:1),up=i-w;
         if(x+dir>=0&&x+dir<w&&!a[up+dir]&&(!a[up]||!a[i+dir])&&((i+this.tick)%3===0)){this.swap(i,up+dir);continue;}
         if(!a[up]){this.swap(i,up);continue;}
         if(x+dir>=0&&x+dir<w&&!a[up+dir]&&!a[i+dir]){this.swap(i,up+dir);continue;}
@@ -185,7 +194,7 @@ class World {
         continue;
       }
       if(!isLiquid(m)&&!isPowder(m))continue;
-      if(m===M.LAVA&&this.tick%2)continue;
+      if((m===M.LAVA&&this.tick%3)||(m===M.OIL&&this.tick%2))continue;
       if(m===M.SNOW&&this.tick%2)continue;
       if(y===h-1){this.velocity[i]=0;continue;}
       const below=i+w;

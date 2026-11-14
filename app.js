@@ -11,8 +11,8 @@ const materials=[
   ['Лава',M.LAVA,'лавы','вязкая жидкость','Тяжёлая, горячая и тягучая. Постепенно застывает в камень.','Песок → стекло · вода → пар'],
   ['Камень',M.STONE,'камня','твёрдый','Неподвижная опора. Построй стенку, чашу или русло для ручья.','Удерживает воду и песок'],
   ['Газ',M.GAS,'газа','горючий газ','Поднимается и дрейфует по ветру. При воспламенении даёт маленькую вспышку.','Газ + огонь → вспышка'],
-  ['Дерево',M.WOOD,'дерева','горючая опора','Можно строить мостики и плотины. Горит дольше растений.','Огонь → дым + пепел'],
-  ['Пар',M.STEAM,'пара','газ','Поднимается в небо. У верхней границы или со временем собирается в капли.','Пар → вода → ручьи'],
+  ['Дерево',M.WOOD,'дерева','горючая опора','Греется и горит на месте, пока есть топливо. В сыром тёплом месте постепенно перегнивает.','Тепло → пепел · сырость → компост'],
+  ['Пар',M.STEAM,'пара','газ','Уносится тёплым воздухом. Остывая, становится каплями; в живом мире пополняет облака.','Испарение → облака → дождь'],
   ['Земля',M.SOIL,'земли','почва','Держит форму и служит опорой для семян. Построй грядку и полей её.','Земля + семя + вода → росток'],
   ['Снег',M.SNOW,'снега','лёгкий порошок','Мягко оседает на склонах. Рядом с горячими материалами превращается в воду.','Снег + тепло → вода'],
   ['Лёд',M.ICE,'льда','замёрзшая опора','Прозрачные неподвижные стенки. Тают при соприкосновении с огнём и лавой.','Лёд + тепло → вода'],
@@ -20,12 +20,13 @@ const materials=[
   ['Растение',M.PLANT,'зелени','живое','Тянется вверх, ветвится и выпускает листья. Запас роста ограничен.','С огнём сгорает'],
   ['Семена',M.SEED,'семян','живое','Падают на землю. Капля воды рядом пробуждает маленький сад.','Семя + почва + вода → растение'],
   ['Дым',M.SMOKE,'дыма','газ','Дрейфует по ветру, поднимается и рассеивается. Не превращается в дождь.','Появляется после горения'],
-  ['Пепел',M.ASH,'пепла','лёгкий порошок','Медленно опускается и образует мягкие серые кучки.','Остаётся от пламени'],
+  ['Пепел',M.ASH,'пепла','лёгкий порошок','Оседает после горения. Горячий пепел отдаёт тепло, а намокший остывший пепел обогащает почву.','Пепел + вода → компост'],
   ['Стекло',M.GLASS,'стекла','прозрачная опора','Сохраняет форму и пропускает цвет пейзажа. Подходит для сосудов.','Получается из песка в лаве'],
+  ['Компост',M.COMPOST,'компоста','плодородная почва','Получается из намокшего пепла и гниющей органики. Сохраняет влагу и питает ростки.','Влага + семя → новая жизнь'],
   ['Ластик',0,'пустоты','инструмент','Стирает физические материалы. Фон и декорации остаются на месте.','Правая кнопка мыши тоже стирает']
 ];
 let material=M.SAND,brush=5,paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
-let quality='auto',tempo=1,focus=false,pointer=null,previous=null,paintPoint=null,erase=false;
+let quality='auto',tempo=.4,focus=false,pointer=null,previous=null,paintPoint=null,erase=false;
 let sceneTime=0,toastTimer,dirty=true,animationTime=0;
 function toast(text){$('toast').textContent=text;$('toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),2300);}
 function selectMaterial(id){
@@ -49,12 +50,14 @@ SCENES.forEach(scene=>{
 function releasePointer(){pointer=null;previous=null;paintPoint=null;}
 function loadScene(id){
   releasePointer();world.reset(id);sceneTime=0;animationTime=0;scenery.build(id);dirty=true;
+  document.body.classList.remove('show-places');
   const s=SCENES.find(s=>s.id===world.scene);$('scene-name').textContent=s.name;$('weather-label').textContent=s.caption;$('world-logic').textContent=s.climate;
   $('cycle-label').textContent=' · '+s.phase[0];
   document.querySelectorAll('.scene').forEach(b=>{const active=b.dataset.scene===world.scene;b.classList.toggle('selected',active);b.setAttribute('aria-pressed',String(active));b.querySelector('.mark').textContent=active?'●':'';});
   render();
 }
-function render(){scenery.render(world,animationTime);dirty=false;}
+const roomContext=$('room-window').getContext('2d');roomContext.imageSmoothingEnabled=false;
+function render(){scenery.render(world,animationTime);roomContext.drawImage(canvas,0,0,160,100);dirty=false;}
 function position(e){const r=canvas.getBoundingClientRect();return{x:Math.max(0,Math.min(w-1,(e.clientX-r.left)/r.width*w)),y:Math.max(0,Math.min(h-1,(e.clientY-r.top)/r.height*h))};}
 function drawAt(p){const m=erase?0:material;world.disk(p.x,p.y,brush,m,m===0);dirty=true;}
 function drawStroke(p){
@@ -67,9 +70,9 @@ function drawCursor(p){
 }
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('pointerdown',e=>{if(pointer!==null||e.button>2)return;e.preventDefault();canvas.focus();pointer=e.pointerId;erase=e.button===2;previous=null;canvas.setPointerCapture(e.pointerId);drawStroke(position(e));render();});
-canvas.addEventListener('pointermove',e=>{const p=position(e);drawCursor(p);if(pointer===e.pointerId){drawStroke(p);if(paused)render();}});
+canvas.addEventListener('pointermove',e=>{const p=position(e);drawCursor(p);const i=Math.floor(p.x)+Math.floor(p.y)*w,m=world.cells[i];$('probe').textContent=m?(materials.find(item=>item[1]===m)[0]+' · '+Math.round(world.temperature[i])+'°C'):'';if(pointer===e.pointerId){drawStroke(p);if(paused)render();}});
 for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,e=>{if(pointer===e.pointerId)releasePointer();});
-canvas.addEventListener('pointerleave',()=>drawCursor(null));window.addEventListener('blur',releasePointer);
+canvas.addEventListener('pointerleave',()=>{drawCursor(null);$('probe').textContent='';});window.addEventListener('blur',releasePointer);
 document.addEventListener('visibilitychange',()=>{releasePointer();last=0;accumulator=0;});
 $('brush').oninput=e=>{brush=Number(e.target.value);$('brush-value').value=brush+' px';};
 function setPause(value){paused=value;accumulator=0;$('pause').textContent=paused?'▶':'Ⅱ';$('pause').setAttribute('aria-label',paused?'Продолжить':'Пауза');$('pause').title=paused?'Продолжить (Пробел)':'Пауза (Пробел)';$('stats').textContent=paused?'пауза':'60 fps';dirty=true;}
@@ -80,13 +83,18 @@ $('ambient').onclick=()=>{world.ambient=!world.ambient;$('ambient').classList.to
 $('intensity').onchange=e=>{world.intense=e.target.value==='wild';};
 $('quality').onchange=e=>{quality=e.target.value;adaptive=60;slow=0;};
 $('tempo').onchange=e=>{tempo=Number(e.target.value);};
-function setFocus(value){focus=value;document.body.classList.toggle('focus',focus);$('focus').setAttribute('aria-label',focus?'Вернуть интерфейс':'Режим фона');if(focus)toast('Только мир · F или Esc — вернуться');}
+function setFocus(value){focus=value;document.body.classList.toggle('focus',focus);document.body.classList.remove('show-places','show-options','hide-tools');$('focus').setAttribute('aria-label',focus?'Вернуть интерфейс':'Режим фона');if(focus){toast('F / Esc — выйти · H — кисти');if(!document.fullscreenElement&&document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});}else if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});}
 $('focus').onclick=()=>setFocus(!focus);
+$('focus-locations').onclick=()=>document.body.classList.toggle('show-places');
+$('focus-settings').onclick=()=>{document.body.classList.toggle('show-options');document.body.classList.remove('hide-tools');};
+$('focus-tools').onclick=()=>document.body.classList.toggle('hide-tools');
+document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement&&focus)setFocus(false);});
 $('snapshot').onclick=()=>{render();canvas.toBlob(blob=>{if(!blob){toast('Не удалось сохранить снимок');return;}const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='sandfox-'+world.scene+'.png';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Маленький мир сохранён');});};
 $('help').onclick=()=>$('help-dialog').showModal();$('close-help').onclick=()=>$('help-dialog').close();
 document.addEventListener('keydown',e=>{
+  if(e.code==='Escape'&&!$('help-dialog').open&&focus){e.preventDefault();setFocus(false);return;}
   if($('help-dialog').open||/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)||e.target.isContentEditable||(e.target.tagName==='BUTTON'&&e.code==='Space'))return;
-  if(e.code==='Space'){e.preventDefault();setPause(!paused);}else if(e.code==='KeyF')setFocus(!focus);else if(e.code==='Escape')setFocus(false);else if(e.code==='KeyR')restart();
+  if(e.code==='Space'){e.preventDefault();setPause(!paused);}else if(e.code==='KeyF')setFocus(!focus);else if(e.code==='KeyH'&&focus)document.body.classList.toggle('hide-tools');else if(e.code==='Escape')setFocus(false);else if(e.code==='KeyR')restart();
   else if(/^Digit[0-9]$/.test(e.code))selectMaterial(Number(e.code.slice(-1)));
   else if(e.code==='BracketLeft'||e.code==='BracketRight'){$('brush').value=Math.max(1,Math.min(18,brush+(e.code==='BracketLeft'?-1:1)));$('brush').dispatchEvent(new Event('input'));}
 });

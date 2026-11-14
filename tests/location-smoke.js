@@ -4,7 +4,7 @@ async page => {
  const images=[],counts=[];
  for(const [id,name]of locations){
    await page.getByRole('button',{name:new RegExp('^'+name)}).click();
-   const info=await page.evaluate(()=>{for(let i=0;i<600;i++)quietDebug.world.step();quietDebug.render();const a=quietDebug.world.cells;return{water:a.filter(m=>m===2).length,plants:a.filter(m=>m===13).length,valid:a.every(m=>m<=17)};});
+   const info=await page.evaluate(()=>{for(let i=0;i<600;i++)quietDebug.world.step();quietDebug.render();const a=quietDebug.world.cells;return{water:a.filter(m=>m===2).length,plants:a.filter(m=>m===13).length,valid:a.every(m=>m<=18)};});
    if(!info.valid)throw new Error('Invalid material in '+id);
    if(id==='garden'&&info.plants<20)throw new Error('Garden seeds did not grow');
    images.push({name,url:await page.locator('#world').evaluate(c=>c.toDataURL())});counts.push({id,...info});
